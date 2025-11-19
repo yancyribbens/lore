@@ -1,0 +1,15 @@
+[package]
+name = "lore"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# https://github.com/rust-bitcoin/rust-bitcoin/pull/5423/files
+# bitcoin is only used for networks which can use the crate created in 5423
+bitcoin = { path = "../rust-bitcoin/bitcoin" }
+
+bitcoin-primitives = { path = "../rust-bitcoin/primitives" }
+bitcoinkernel = "0.0.24"
+bitcoin-p2p-messages = { path = "../rust-bitcoin/p2p" }
+encoding = { package = "bitcoin-consensus-encoding", path = "../rust-bitcoin/consensus_encoding" }
+clap = { version = "4.5.53", features = ["derive"] }
