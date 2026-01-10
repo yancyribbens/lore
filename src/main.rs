@@ -132,6 +132,10 @@ pub fn create_version_message() -> VersionMessage {
     )
 }
 
+use bitcoin_p2p_messages::message;
+use bitcoin_p2p_messages::message::V1MessageHeader;
+use bitcoin_p2p_messages::message_network;
+
 pub fn network_start(_chainman: ChainstateManager, network: Network, remote: Ipv4Addr) {
     let magic: Magic = Magic::try_from(network).unwrap();
     let port = network.default_p2p_port();
@@ -150,14 +154,38 @@ pub fn network_start(_chainman: ChainstateManager, network: Network, remote: Ipv
         let read_stream = stream.try_clone().unwrap();
         let mut stream_reader = std::io::BufReader::new(read_stream);
         loop {
-            // Loop and retrieve new messages
-            let reply =
-                encoding::decode_from_read::<bitcoin_p2p_messages::message::RawNetworkMessage, _>(&mut stream_reader)
-                    .unwrap();
-            match reply.payload() {
-                NetworkMessage::Version(v) => {
-                    println!("payload {:?}", reply.payload());
-                    println!("Received version message: {:?}", v);
+            //let reply = NetworkMessage::decode(&mut stream_reader).unwrap();
+            let V1MessageHeader {command, ..} = encoding::decode_from_read::<V1MessageHeader, _>(&mut stream_reader).unwrap();
+
+            // consume the remainnder of the buffer returning the message
+            match command.as_ref() {
+                "alert" => {
+                    let msg =
+                        encoding::decode_from_read::<message_network::Alert, _>(&mut stream_reader)
+                            .unwrap();
+                    println!("msg {:?}", msg);
+                },
+                "ping" => {
+                    println!("got ping");
+                    //NetworkMessage::Ping(nonce) => {
+                        //println!("got a ping with nonce: {}", nonce);
+
+                        //let pong_msg = NetworkMessage::Pong(*nonce);
+                        //let raw_msg = RawNetworkMessage::new(
+                            //magic,
+                            //pong_msg
+                        //);
+                        //encoding::encode_to_writer(&raw_msg, &mut stream).unwrap();
+                },
+                "sendcmpct" => println!("sendcmpct"),
+                "verack" => {
+                    println!("received verack");
+                },
+                "version" => {
+                    let msg =
+                        encoding::decode_from_read::<VersionMessage, _>(&mut stream_reader)
+                            .unwrap();
+                    println!("msg {:?}", msg);
 
                     let second_message = RawNetworkMessage::new(
                         magic,
@@ -165,71 +193,87 @@ pub fn network_start(_chainman: ChainstateManager, network: Network, remote: Ipv
                     );
 
                     encoding::encode_to_writer(&second_message, &mut stream).unwrap();
-                    println!("Sent verack message");
-                }
-                NetworkMessage::Verack => {
-                    println!("Received verack message: {:?}", reply.payload());
-
-                    let get_blocks_msg = NetworkMessage::GetBlocks(GetBlocksMessage {
-                        version: PROTOCOL_VERSION,
-                        locator_hashes: vec![],
-                        stop_hash: BlockHash::from_byte_array([0xab; 32]),
-                    });
-
-                    let raw_msg = RawNetworkMessage::new(
-                        magic,
-                        get_blocks_msg
-                    );
-
-                    encoding::encode_to_writer(&raw_msg, &mut stream).unwrap();
-                }
-                NetworkMessage::Ping(nonce) => {
-                    println!("got a ping with nonce: {}", nonce);
-
-                    let pong_msg = NetworkMessage::Pong(*nonce);
-                    let raw_msg = RawNetworkMessage::new(
-                        magic,
-                        pong_msg
-                    );
-                    encoding::encode_to_writer(&raw_msg, &mut stream).unwrap();
-                }
-                NetworkMessage::Addr(_) => println!("addr"),
-                NetworkMessage::Inv(_) => println!("inv"),
-                NetworkMessage::GetData(_) => println!("getdata"),
-                NetworkMessage::NotFound(_) => println!("notfound"),
-                NetworkMessage::GetBlocks(_) => println!("getblocks"),
-                NetworkMessage::GetHeaders(_) => println!("getheaders"),
-                NetworkMessage::MemPool => println!("mempool"),
-                NetworkMessage::Tx(_) => println!("tx"),
-                NetworkMessage::Block(_) => println!("block"),
-                NetworkMessage::Headers(_) => println!("headers"),
-                NetworkMessage::SendHeaders => println!("sendheaders"),
-                NetworkMessage::GetAddr => println!("getaddr"),
-                NetworkMessage::Pong(_) => println!("pong"),
-                NetworkMessage::MerkleBlock(_) => println!("merkleblock"),
-                NetworkMessage::FilterLoad(_) => println!("filterload"),
-                NetworkMessage::FilterAdd(_) => println!("filteradd"),
-                NetworkMessage::FilterClear => println!("filterclear"),
-                NetworkMessage::GetCFilters(_) => println!("getcfilters"),
-                NetworkMessage::CFilter(_) => println!("cfilter"),
-                NetworkMessage::GetCFHeaders(_) => println!("getcfheaders"),
-                NetworkMessage::CFHeaders(_) => println!("cfheaders"),
-                NetworkMessage::GetCFCheckpt(_) => println!("getcfcheckpt"),
-                NetworkMessage::CFCheckpt(_) => println!("cfcheckpt"),
-                NetworkMessage::SendCmpct(_) => println!("sendcmpct"),
-                NetworkMessage::CmpctBlock(_) => println!("cmpctblock"),
-                NetworkMessage::GetBlockTxn(_) => println!("getblocktxn"),
-                NetworkMessage::BlockTxn(_) => println!("blocktxn"),
-                NetworkMessage::Alert(a) => {
-                    println!("got alert: {:?}", a)
+                    println!("sent verack back in response to version");
                 },
-                NetworkMessage::Reject(_) => println!("reject"),
-                NetworkMessage::FeeFilter(_) => println!("feefilter"),
-                NetworkMessage::WtxidRelay => println!("wtxidrelay"),
-                NetworkMessage::AddrV2(_) => println!("addrv2"),
-                NetworkMessage::SendAddrV2 => println!("sendaddrv2"),
-                NetworkMessage::Unknown { .. } => println!("unknown"),
+                _ => unimplemented!("{:?}", command.as_ref())
             }
+
+            //match reply {
+                //NetworkMessage::Version(v) => {
+                    //println!("payload {:?}", reply);
+                    //println!("Received version message: {:?}", v);
+
+                    //let second_message = RawNetworkMessage::new(
+                        //magic,
+                        //NetworkMessage::Verack,
+                    //);
+
+                    //encoding::encode_to_writer(&second_message, &mut stream).unwrap();
+                    //println!("Sent verack message");
+                //}
+                //NetworkMessage::Verack => {
+                    //println!("Received verack message: {:?}", reply);
+
+                    //let get_blocks_msg = NetworkMessage::GetBlocks(GetBlocksMessage {
+                        //version: PROTOCOL_VERSION,
+                        //locator_hashes: vec![],
+                        //stop_hash: BlockHash::from_byte_array([0xab; 32]),
+                    //});
+
+                    //let raw_msg = RawNetworkMessage::new(
+                        //magic,
+                        //get_blocks_msg
+                    //);
+
+                    //encoding::encode_to_writer(&raw_msg, &mut stream).unwrap();
+                //}
+                //NetworkMessage::Ping(nonce) => {
+                    //println!("got a ping with nonce: {}", nonce);
+
+                    //let pong_msg = NetworkMessage::Pong(*nonce);
+                    //let raw_msg = RawNetworkMessage::new(
+                        //magic,
+                        //pong_msg
+                    //);
+                    //encoding::encode_to_writer(&raw_msg, &mut stream).unwrap();
+                //}
+                //NetworkMessage::Addr(_) => println!("addr"),
+                //NetworkMessage::Inv(_) => println!("inv"),
+                //NetworkMessage::GetData(_) => println!("getdata"),
+                //NetworkMessage::NotFound(_) => println!("notfound"),
+                //NetworkMessage::GetBlocks(_) => println!("getblocks"),
+                //NetworkMessage::GetHeaders(_) => println!("getheaders"),
+                //NetworkMessage::MemPool => println!("mempool"),
+                //NetworkMessage::Tx(_) => println!("tx"),
+                //NetworkMessage::Block(_) => println!("block"),
+                //NetworkMessage::Headers(_) => println!("headers"),
+                //NetworkMessage::SendHeaders => println!("sendheaders"),
+                //NetworkMessage::GetAddr => println!("getaddr"),
+                //NetworkMessage::Pong(_) => println!("pong"),
+                //NetworkMessage::MerkleBlock(_) => println!("merkleblock"),
+                //NetworkMessage::FilterLoad(_) => println!("filterload"),
+                //NetworkMessage::FilterAdd(_) => println!("filteradd"),
+                //NetworkMessage::FilterClear => println!("filterclear"),
+                //NetworkMessage::GetCFilters(_) => println!("getcfilters"),
+                //NetworkMessage::CFilter(_) => println!("cfilter"),
+                //NetworkMessage::GetCFHeaders(_) => println!("getcfheaders"),
+                //NetworkMessage::CFHeaders(_) => println!("cfheaders"),
+                //NetworkMessage::GetCFCheckpt(_) => println!("getcfcheckpt"),
+                //NetworkMessage::CFCheckpt(_) => println!("cfcheckpt"),
+                //NetworkMessage::SendCmpct(_) => println!("sendcmpct"),
+                //NetworkMessage::CmpctBlock(_) => println!("cmpctblock"),
+                //NetworkMessage::GetBlockTxn(_) => println!("getblocktxn"),
+                //NetworkMessage::BlockTxn(_) => println!("blocktxn"),
+                //NetworkMessage::Alert(a) => {
+                    //println!("got alert: {:?}", a)
+                //},
+                //NetworkMessage::Reject(_) => println!("reject"),
+                //NetworkMessage::FeeFilter(_) => println!("feefilter"),
+                //NetworkMessage::WtxidRelay => println!("wtxidrelay"),
+                //NetworkMessage::AddrV2(_) => println!("addrv2"),
+                //NetworkMessage::SendAddrV2 => println!("sendaddrv2"),
+                //NetworkMessage::Unknown { .. } => println!("unknown"),
+            //}
         }
         let _ = stream.shutdown(std::net::Shutdown::Both);
     } else {
