@@ -1,28 +1,21 @@
-use bitcoinkernel::{Context, ChainType, KernelError};
-use bitcoinkernel::ChainstateManagerBuilder;
-use bitcoinkernel::ChainstateManager;
-
-use std::sync::Arc;
-use std::sync::mpsc;
-use std::sync::Mutex;
-use std::thread::available_parallelism;
 use std::net::SocketAddr;
 
 use bitcoin::network::Network;
 
-use bitcoin_primitives::BlockHash;
 use bitcoin_p2p_messages::Address;
 use bitcoin_p2p_messages::ServiceFlags;
 use bitcoin_p2p_messages::ProtocolVersion;
 use bitcoin_p2p_messages::Magic;
 use bitcoin_p2p_messages::NetworkExt;
-use bitcoin_p2p_messages::message::{NetworkMessage, RawNetworkMessage};
-use bitcoin_p2p_messages::message::AddrV2Payload;
+use bitcoin_p2p_messages::message::{NetworkMessage, V1NetworkMessage};
 use bitcoin_p2p_messages::message_network::VersionMessage;
 use bitcoin_p2p_messages::message_network::ClientSoftwareVersion;
 use bitcoin_p2p_messages::message_network::UserAgent;
 use bitcoin_p2p_messages::message_network::UserAgentVersion;
-use bitcoin_p2p_messages::message_blockdata::GetBlocksMessage;
+
+use bitcoin_p2p_messages::message;
+use bitcoin_p2p_messages::message::V1MessageHeader;
+use bitcoin_p2p_messages::message_network;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::net::TcpStream;
@@ -30,54 +23,11 @@ use std::net::TcpStream;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 
+use clap::Parser;
+
 const LOCAL:(u8, u8, u8, u8) = (127, 0, 0, 1);
 const LOCAL_PORT: u16 = 54321;
-
-const DATA_DIR: &str = "/tmp";
-const BLOCKS_DIR: &str = "/tmp/blocks";
-
 const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::INVALID_CB_NO_BAN_VERSION;
-
-#[derive(Clone)]
-pub struct TipState {
-    pub block_hash: bitcoin_primitives::BlockHash,
-}
-
-impl Default for TipState {
-    fn default() -> Self {
-        Self {
-            block_hash: BlockHash::GENESIS_PREVIOUS_BLOCK_HASH,
-        }
-    }
-}
-
-fn chain_context() -> Result<Context, KernelError>  {
-    // TODO parse different chains.
-    let chain_type = ChainType::Testnet4;
-    let context = Context::builder().chain_type(chain_type).build()?;
-
-    Ok(context)
-}
-
-impl NodeState {
-    pub fn set_tip_state(&self, block_hash: BlockHash) {
-        let mut state = self.tip_state.lock().unwrap();
-        state.block_hash = block_hash;
-    }
-
-    pub fn get_tip_state(&self) -> TipState {
-        let state = self.tip_state.lock().unwrap();
-        state.clone()
-    }
-}
-
-pub struct NodeState {
-    pub addr_tx: mpsc::Sender<AddrV2Payload>,
-    pub block_tx: mpsc::SyncSender<bitcoinkernel::Block>,
-    pub tip_state: Arc<Mutex<TipState>>,
-    pub context: Arc<Context>,
-    pub chainman: Arc<ChainstateManager>,
-}
 
 pub fn create_version_message() -> VersionMessage {
     let (la, lb, lc, ld) = LOCAL;
@@ -132,112 +82,79 @@ pub fn create_version_message() -> VersionMessage {
     )
 }
 
-pub fn network_start(_chainman: ChainstateManager, network: Network, remote: Ipv4Addr) {
+pub fn network_start(network: Network, remote: Ipv4Addr) {
     let magic: Magic = Magic::try_from(network).unwrap();
     let port = network.default_p2p_port();
 
     let version_message = create_version_message();
     let init_msg = NetworkMessage::Version(version_message);
-    let raw_msg = RawNetworkMessage::new(magic, init_msg);
+    let raw_msg = V1NetworkMessage::new(magic, init_msg);
 
     let remote_socket: SocketAddr = SocketAddr::new(IpAddr::V4(remote), port);
     if let Ok(mut stream) = TcpStream::connect(remote_socket) {
-        // Send the message
         encoding::encode_to_writer(&raw_msg, &mut stream).unwrap();
         println!("Sent version message");
 
-        // Setup StreamReader
         let read_stream = stream.try_clone().unwrap();
         let mut stream_reader = std::io::BufReader::new(read_stream);
         loop {
-            // Loop and retrieve new messages
-            let reply =
-                encoding::decode_from_read::<bitcoin_p2p_messages::message::RawNetworkMessage, _>(&mut stream_reader)
-                    .unwrap();
-            match reply.payload() {
-                NetworkMessage::Version(v) => {
-                    println!("payload {:?}", reply.payload());
-                    println!("Received version message: {:?}", v);
+            let V1MessageHeader {command, ..} = encoding::decode_from_read::<V1MessageHeader, _>(&mut stream_reader).unwrap();
 
-                    let second_message = RawNetworkMessage::new(
+            match command.as_ref() {
+                "alert" => {
+                    let msg =
+                        encoding::decode_from_read::<message_network::Alert, _>(&mut stream_reader)
+                            .unwrap();
+                    println!("msg {:?}", msg);
+                },
+                "ping" => {
+                    println!("got ping");
+                    let msg = encoding::decode_from_read::<bitcoin_p2p_messages::message::Ping, _>(
+                        &mut stream_reader
+                    ).unwrap();
+
+                    let pong = bitcoin_p2p_messages::message::Pong::from(msg);
+
+                    let msg_header = V1MessageHeader::new(magic, &pong, "pong");
+                    println!("send pong header");
+                    let _ = encoding::encode_to_writer(&msg_header, &stream);
+
+                    println!("send pong");
+                    let _ = encoding::encode_to_writer(&pong, &stream);
+                },
+                "sendcmpct" => {
+                    let msg = encoding::decode_from_read::<bitcoin_p2p_messages::message_compact_blocks::SendCmpct, _>(&mut stream_reader).unwrap();
+                    println!("decoded sendcmpct: {:?}", msg);
+
+                },
+                "verack" => {
+                    println!("received verack");
+                },
+                "version" => {
+                    let msg =
+                        encoding::decode_from_read::<VersionMessage, _>(&mut stream_reader)
+                            .unwrap();
+                    println!("msg {:?}", msg);
+
+                    let second_message = V1NetworkMessage::new(
                         magic,
                         NetworkMessage::Verack,
                     );
 
                     encoding::encode_to_writer(&second_message, &mut stream).unwrap();
-                    println!("Sent verack message");
-                }
-                NetworkMessage::Verack => {
-                    println!("Received verack message: {:?}", reply.payload());
-
-                    let get_blocks_msg = NetworkMessage::GetBlocks(GetBlocksMessage {
-                        version: PROTOCOL_VERSION,
-                        locator_hashes: vec![],
-                        stop_hash: BlockHash::from_byte_array([0xab; 32]),
-                    });
-
-                    let raw_msg = RawNetworkMessage::new(
-                        magic,
-                        get_blocks_msg
-                    );
-
-                    encoding::encode_to_writer(&raw_msg, &mut stream).unwrap();
-                }
-                NetworkMessage::Ping(nonce) => {
-                    println!("got a ping with nonce: {}", nonce);
-
-                    let pong_msg = NetworkMessage::Pong(*nonce);
-                    let raw_msg = RawNetworkMessage::new(
-                        magic,
-                        pong_msg
-                    );
-                    encoding::encode_to_writer(&raw_msg, &mut stream).unwrap();
-                }
-                NetworkMessage::Addr(_) => println!("addr"),
-                NetworkMessage::Inv(_) => println!("inv"),
-                NetworkMessage::GetData(_) => println!("getdata"),
-                NetworkMessage::NotFound(_) => println!("notfound"),
-                NetworkMessage::GetBlocks(_) => println!("getblocks"),
-                NetworkMessage::GetHeaders(_) => println!("getheaders"),
-                NetworkMessage::MemPool => println!("mempool"),
-                NetworkMessage::Tx(_) => println!("tx"),
-                NetworkMessage::Block(_) => println!("block"),
-                NetworkMessage::Headers(_) => println!("headers"),
-                NetworkMessage::SendHeaders => println!("sendheaders"),
-                NetworkMessage::GetAddr => println!("getaddr"),
-                NetworkMessage::Pong(_) => println!("pong"),
-                NetworkMessage::MerkleBlock(_) => println!("merkleblock"),
-                NetworkMessage::FilterLoad(_) => println!("filterload"),
-                NetworkMessage::FilterAdd(_) => println!("filteradd"),
-                NetworkMessage::FilterClear => println!("filterclear"),
-                NetworkMessage::GetCFilters(_) => println!("getcfilters"),
-                NetworkMessage::CFilter(_) => println!("cfilter"),
-                NetworkMessage::GetCFHeaders(_) => println!("getcfheaders"),
-                NetworkMessage::CFHeaders(_) => println!("cfheaders"),
-                NetworkMessage::GetCFCheckpt(_) => println!("getcfcheckpt"),
-                NetworkMessage::CFCheckpt(_) => println!("cfcheckpt"),
-                NetworkMessage::SendCmpct(_) => println!("sendcmpct"),
-                NetworkMessage::CmpctBlock(_) => println!("cmpctblock"),
-                NetworkMessage::GetBlockTxn(_) => println!("getblocktxn"),
-                NetworkMessage::BlockTxn(_) => println!("blocktxn"),
-                NetworkMessage::Alert(a) => {
-                    println!("got alert: {:?}", a)
+                    println!("sent verack back in response to version");
                 },
-                NetworkMessage::Reject(_) => println!("reject"),
-                NetworkMessage::FeeFilter(_) => println!("feefilter"),
-                NetworkMessage::WtxidRelay => println!("wtxidrelay"),
-                NetworkMessage::AddrV2(_) => println!("addrv2"),
-                NetworkMessage::SendAddrV2 => println!("sendaddrv2"),
-                NetworkMessage::Unknown { .. } => println!("unknown"),
+                "feefilter" => {
+                    let msg = encoding::decode_from_read::<message::FeeFilter, _>(&mut stream_reader).unwrap();
+                    println!("got feefilter {:?}", msg);
+                },
+                _ => unimplemented!("{:?}", command.as_ref())
             }
         }
-        let _ = stream.shutdown(std::net::Shutdown::Both);
     } else {
         eprintln!("failed to open connection");
     }
 }
-
-use clap::Parser;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -250,20 +167,11 @@ struct Args {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let context = chain_context()?;
-    let arc_context = Arc::new(context);
-    let chainman_builder = ChainstateManagerBuilder::new(&arc_context, &DATA_DIR, &BLOCKS_DIR)?
-        .worker_threads(((available_parallelism().unwrap().get() / 2) + 1).try_into()?,
-    );
-    let chainman = chainman_builder.build()?;
-    chainman.import_blocks()?;
-    println!("Bitcoin kernel initialized");
-
     let args = Args::parse();
     let network: Network = args.network;
     let remote: Ipv4Addr = args.remote_address;
 
-    network_start(chainman, network, remote);
+    network_start(network, remote);
 
     Ok(())
 }
