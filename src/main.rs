@@ -160,9 +160,16 @@ pub fn network_start(_chainman: ChainstateManager, network: Network, remote: Ipv
             // consume the remainnder of the buffer returning the message
             match command.as_ref() {
                 "version" => {
-                    let msg = encoding::decode_from_read::<VersionMessage, _>(&mut stream_reader).unwrap();
+                    let msg =
+                        encoding::decode_from_read::<VersionMessage, _>(&mut stream_reader)
+                            .unwrap();
                     println!("msg {:?}", msg);
+
+                    // encoding::encode_to_writer();
                 },
+                "verack" => {
+                    panic!("verack");
+                }
                 _ => unimplemented!()
             }
 
