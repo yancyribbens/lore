@@ -166,16 +166,10 @@ pub fn network_start(_chainman: ChainstateManager, network: Network, remote: Ipv
                     println!("msg {:?}", msg);
                 },
                 "ping" => {
-                    println!("got ping");
-                    //NetworkMessage::Ping(nonce) => {
-                        //println!("got a ping with nonce: {}", nonce);
-
-                        //let pong_msg = NetworkMessage::Pong(*nonce);
-                        //let raw_msg = RawNetworkMessage::new(
-                            //magic,
-                            //pong_msg
-                        //);
-                        //encoding::encode_to_writer(&raw_msg, &mut stream).unwrap();
+                    let msg =
+                        encoding::decode_from_read::<message::Ping, _>(&mut stream_reader)
+                            .unwrap();
+                    println!("ping msg {:?}", msg);
                 },
                 "sendcmpct" => println!("sendcmpct"),
                 "verack" => {
