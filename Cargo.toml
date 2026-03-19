@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bitcoin = { path = "../rust-bitcoin/bitcoin" }
+encoding = { package = "bitcoin-consensus-encoding", path = "../rust-bitcoin/consensus_encoding" }
+bitcoin-p2p-messages = { path = "../rust-bitcoin/p2p" }
+clap = { version = "4.5.53", features = ["derive"] }
