@@ -7,4 +7,6 @@ edition = "2024"
 bitcoin = { path = "../rust-bitcoin/bitcoin" }
 encoding = { package = "bitcoin-consensus-encoding", path = "../rust-bitcoin/consensus_encoding" }
 bitcoin-p2p-messages = { path = "../rust-bitcoin/p2p" }
+bitcoinkernel = "0.0.24"
+bitcoin-primitives = { path = "../rust-bitcoin/primitives" }
 clap = { version = "4.5.53", features = ["derive"] }
